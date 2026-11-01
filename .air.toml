@@ -1,0 +1,118 @@
+root = "."
+tmp_dir = "air"
+
+# ============================================================================
+# BUILD
+# ============================================================================
+
+[build]
+# Build binary
+cmd = "make build-air"
+bin = "./air/app"
+
+# Argumen tambahan saat run binary
+args_bin = []
+
+# Delay setelah file berubah sebelum trigger build (ms)
+delay = 1000
+
+# Delay setelah build sukses sebelum restart (ms)
+rerun_delay = 500
+
+# Kirim SIGINT dulu sebelum kill (untuk graceful shutdown)
+send_interrupt = true
+
+# Waktu tunggu setelah SIGINT sebelum force kill
+kill_delay = "5s"
+
+# Rerun binary meski tidak ada perubahan
+rerun = false
+
+# Stop jika build error (tidak jalankan binary lama)
+stop_on_error = true
+
+# -------------------------------------------------------
+# File & Directory Watcher
+# -------------------------------------------------------
+
+# Ekstensi file yang dipantau
+include_ext = ["go", "env", "yaml", "yml", "toml", "html", "tpl", "tmpl", "sql"]
+
+# Direktori yang dipantau (kosong = semua)
+include_dir = []
+
+# File spesifik yang dipantau
+include_file = [".env", ".env.local", "config.*.toml"]
+
+# Direktori yang diabaikan
+exclude_dir = [
+  "vendor",
+  "bin",
+  "air",
+  ".git",
+  "testdata",
+  "docs",
+  "scripts",
+  "assets",
+  "static",
+  "node_modules",
+  "tmp",
+]
+
+# File spesifik yang diabaikan
+exclude_file = []
+
+# Regex pattern file yang diabaikan
+exclude_regex = [
+  "_test\\.go",
+  "\\.pb\\.go", # protobuf generated
+  "\\.gen\\.go", # generated files
+  "mock_.*\\.go", # mock files
+  ".*_mock\\.go",
+]
+
+# Abaikan file yang tidak berubah (berdasarkan checksum)
+exclude_unchanged = true
+
+# Ikuti symlink
+follow_symlink = false
+
+# ============================================================================
+# LOG
+# ============================================================================
+
+[log]
+# Tampilkan waktu di log air
+time = true
+
+# Hanya tampilkan log error dari app
+main_only = false
+
+# ============================================================================
+# COLOR
+# ============================================================================
+
+[color]
+main = "magenta"
+watcher = "cyan"
+build = "yellow"
+runner = "green"
+
+# ============================================================================
+# SCREEN
+# ============================================================================
+
+[screen]
+# Clear terminal setiap kali reload
+clear_on_rebuild = true
+
+# Tampilkan baris yang berubah di log
+keep_scroll = true
+
+# ============================================================================
+# MISC
+# ============================================================================
+
+[misc]
+# Hapus binary di tmp_dir saat air dihentikan
+clean_on_exit = true

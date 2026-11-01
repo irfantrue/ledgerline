@@ -1,0 +1,44 @@
+# If you prefer the allow list template instead of the deny list, see community template:
+# https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
+#
+# NOTE: every pattern below is anchored to the repository root (leading "/") on purpose.
+# Unanchored globs such as "coverage.*", ".env" or "go.work" also match files inside the
+# committed vendor/ tree (e.g. vendor/golang.org/x/text/language/coverage.go). Git silently
+# drops those files from the commit, which leaves vendor/ incomplete and breaks
+# `make build` on a fresh clone.
+
+# Binaries for programs and plugins
+/*.exe
+/*.exe~
+/*.dll
+/*.so
+/*.dylib
+
+# Test binary, built by `go test -c`
+/*.test
+
+# Code coverage profiles and other test artifacts
+/*.out
+/coverage.*
+/*.coverprofile
+/profile.cov
+
+# Dependency directories
+# vendor/ is intentionally NOT ignored: it is committed so builds are reproducible
+# without network access. After changing imports run `make tidy && make vendor`
+# and commit the result.
+
+# Go workspace file
+/go.work
+/go.work.sum
+
+# env file
+/.env
+
+# build
+/bin
+/air
+
+# Editor/IDE
+# .idea/
+# .vscode/

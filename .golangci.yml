@@ -1,0 +1,136 @@
+version: "2"
+
+run:
+  # Default timeout is 1m, which can be too short for larger codebases
+  timeout: 5m
+  # Exit code when issues are found
+  issues-exit-code: 1
+  # Include test files in the linting process
+  tests: true
+
+linters:
+  # "standard" = errcheck, govet, ineffassign, staticcheck, unused.
+  # Dibuat eksplisit biar jelas baseline-nya.
+  default: standard
+  enable:
+    # Architecture boundary (aturan dependency antar modul)
+    - depguard # Melarang import package tertentu (lihat settings di bawah)
+
+    # Core correctness
+    - errcheck # Finds unchecked errors
+    - govet # Reports suspicious constructs
+    - ineffassign # Detects when assignments to existing variables are not used
+    - staticcheck # Drop-in replacement for go vet with more checks
+    - unused # Finds unused code (dead code) [BARU]
+
+    # Highly Recommended Best Practices
+    - bodyclose # Ensures HTTP response bodies are closed successfully
+    - goconst # Finds repeated strings that should be constants
+    - gocritic # Comprehensive linter containing many rules
+    - gocyclo # Enforces maximum function complexity
+    - gosec # Inspects source code for security problems
+    - noctx # Finds HTTP requests made without context.Context
+    - prealloc # Suggests preallocating slice capacities when length is known
+    - revive # Modern, faster drop-in replacement for golint
+    - unparam # Reports unused function parameters
+
+    # Tambahan untuk quality gate ala SonarQube (sesuai CLAUDE.md) [BARU]
+    - gocognit # Cognitive complexity (metrik yang dipakai SonarQube)
+    - nestif # Mendeteksi nested if yang terlalu dalam
+    - dupl # Mendeteksi blok kode duplikat
+    - funlen # Membatasi panjang fungsi
+    - errorlint # Memastikan error di-wrap (%w) & dibandingkan dengan errors.Is/As
+    - sqlclosecheck # Memastikan sql.Rows/Stmt di-Close
+    - rowserrcheck # Memastikan rows.Err() dicek setelah iterasi
+    - misspell # Typo di komentar & string
+
+  settings:
+    # --- Quality gate thresholds [BARU] ---
+    gocyclo:
+      # Default 30 terlalu longgar. 15 selaras dengan threshold SonarQube
+      min-complexity: 15
+    gocognit:
+      # Cognitive complexity maksimum per fungsi
+      min-complexity: 15
+    nestif:
+      # Maksimum kompleksitas nested if
+      min-complexity: 4
+    dupl:
+      # Jumlah token berurutan yang dianggap duplikat (~10 baris)
+      threshold: 100
+    funlen:
+      # Maksimum panjang fungsi
+      lines: 60
+      statements: 40
+    goconst:
+      # String dianggap konstanta jika muncul >= 3x dengan panjang >= 3
+      min-len: 3
+      min-occurrences: 3
+    revive:
+      # enable-default-rules keeps revive's default rule set active
+      # (exported, package-comments, var-naming, ...). Listing a single
+      # custom rule under `rules` replaces every default rule, so without
+      # this line revive would silently stop checking anything else.
+      enable-default-rules: true
+      rules:
+        # Maksimum parameter per fungsi
+        - name: argument-limit
+          arguments: [7]
+
+    # --- Architecture boundary ---
+    depguard:
+      rules:
+        pkg-no-internal-modules:
+          list-mode: lax
+          files:
+            - "**/pkg/**"
+          deny:
+            - pkg: ledgerline/internal
+              desc: "pkg tidak boleh bergantung ke internal package"
+
+        shared-no-business-modules:
+          list-mode: lax
+          files:
+            - "**/internal/shared/**"
+          deny:
+            - pkg: ledgerline/internal/identity
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+            - pkg: ledgerline/internal/customer
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+            - pkg: ledgerline/internal/account
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+            - pkg: ledgerline/internal/ledger
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+            - pkg: ledgerline/internal/transaction
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+            - pkg: ledgerline/internal/notification
+              desc: "platform tidak boleh bergantung ke modul bisnis"
+
+  # [BARU] Linter yang terlalu noisy di file test dimatikan khusus _test.go.
+  # Rule tetap ketat untuk kode production.
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec
+          - dupl
+          - funlen
+          - gocognit
+          - gocyclo
+          - goconst
+
+issues:
+  # Batas jumlah issue per linter (0 = tanpa batas)
+  max-issues-per-linter: 50
+  # Batas issue yang sama persis yang ditampilkan
+  max-same-issues: 3
+  # false = cek seluruh kode; true = hanya kode baru (diff dari git)
+  # Kalau mau meniru "new code" SonarQube di CI, set true dan pakai
+  # `golangci-lint run --new-from-rev=origin/main`
+  new: false
+  # Jangan auto-fix, biar perubahan selalu lewat review
+  fix: false
+  # Satu issue per baris (hindari duplikat antar linter)
+  uniq-by-line: true
+  # false = hanya cek baris yang berubah saat mode "new"
+  whole-files: false

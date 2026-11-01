@@ -1,0 +1,23 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/ledger/infrastructure/queries
+    queries: internal/ledger/infrastructure/queries
+    gen:
+      go:
+        package: sqlcgen
+        out: internal/ledger/infrastructure/sqlcgen
+        sql_package: pgx/v5
+        emit_interface: false
+        emit_empty_slices: true
+        overrides:
+          - db_type: "uuid"
+            go_type:
+              import: github.com/google/uuid
+              type: UUID
+          - db_type: timestamptz
+            go_type: time.Time
+          - db_type: "pg_catalog.numeric"
+            go_type:
+              import: github.com/shopspring/decimal
+              type: Decimal
