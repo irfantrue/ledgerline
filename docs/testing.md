@@ -2,18 +2,77 @@
 
 ## Aturan utama
 
-- **Test tinggal di `test/`, bukan di sebelah kode.** Pohon test mencerminkan source tree:
+- **Test tinggal di `tests/`, bukan di sebelah kode.** Pohon test mencerminkan source tree:
 
 | Source | Test |
 |---|---|
-| `internal/ledger/` | `test/ledger/` |
-| `internal/shared/config/` | `test/shared/config/` |
-| `internal/shared/httpx/middleware/` | `test/shared/httpx/middleware/` |
-| `pkg/jwt/` | `test/pkg/jwt/` |
+| `internal/ledger/` | `tests/ledger/` |
+| `internal/shared/config/` | `tests/shared/config/` |
+| `internal/shared/httpx/middleware/` | `tests/shared/httpx/middleware/` |
+| `pkg/jwt/` | `tests/pkg/jwt/` |
 
 - Karena package test berada di luar kode yang diuji, test hanya bisa memakai identifier **exported**. Kalau test butuh helper, export helper-nya — jangan memindahkan test balik ke `internal/`.
-- Tidak ada framework mocking. Pakai table-driven test dan `httptest`.
+- **Tidak ada service yang dibutuhkan.** Seluruh suite berjalan tanpa PostgreSQL, Redis, dan RabbitMQ: dependency-nya dimock lewat `testify/mock`.
 - `internal/` dan `pkg/` bebas file test.
+
+## Framework dan alat
+
+- Assertion: `github.com/stretchr/testify/assert` (pemeriksaan nilai) dan `github.com/stretchr/testify/require` (precondition yang harus menghentikan test).
+- Mock: `github.com/stretchr/testify/mock`. Setiap package sumber yang punya interface punya package mock sendiri di `tests/mocks/`, jadi double diimpor dari tempat yang memiliki interface-nya.
+- Generator mock: [mockery](https://github.com/vektra/mockery) v3, dikonfigurasi di `.mockery.yaml`.
+- Test tetap table-driven kalau memang ada banyak kasus; `httptest` untuk yang menyentuh HTTP.
+
+## Mocking
+
+Mock di-generate dengan mockery, bukan ditulis tangan. Konfigurasinya ada di `.mockery.yaml`; file hasil generate tinggal di `tests/mocks/` dan ikut di-commit, jadi clone baru bisa build tanpa mockery terpasang.
+
+Setiap package sumber punya direktori sendiri, dengan nama package yang berbeda dari package sumbernya. Jadi `database.DBTX` diimpor sebagai `databasemocks.DBTX`, bukan sebagai `mocks.DBTX`.
+
+```bash
+make mocks      # regenerate setelah interface berubah
+```
+
+| Package mock | Double | Berperan sebagai |
+|---|---|---|
+| `databasemocks` | `DBTX` | `database.DBTX` — handle database |
+| `databasemocks` | `Pool` | `database.Pool` — pool yang menyerahkan transaksi mock |
+| `repositorymocks` | `Querier` | `repository.Querier` — resolver handle per call |
+| `pgxmocks` | `Tx` | `pgx.Tx` — transaksi |
+| `pgxmocks` | `Row`, `Rows` | `pgx.Row`, `pgx.Rows` — baris dan result set |
+| `cachemocks` | `Backend` | `cache.Backend` — perintah Redis |
+| `brokermocks` | `Channel`, `Connection`, `Confirmation` | channel, connection, dan konfirmasi publisher AMQP |
+| `amqpmocks` | `Acknowledger` | `amqp.Acknowledger` — mencatat ack/nack delivery |
+| `httpxmocks` | `Pinger` | `httpx.Pinger` — handle database untuk readiness probe |
+
+Mock interface pakai pola testify: `On(...)` menyiapkan expectation, `Return(...)` memberi hasil, `AssertExpectations(t)` memverifikasi panggilan terjadi.
+
+### Fixture di atas mock generated
+
+Mock generated hanya tahu bentuk method-nya, bukan isi result set. Fixture meletakkan diri di package mock yang dikonfigurasi:
+
+| Helper | Package | Kegunaan |
+|---|---|---|
+| `RowValues(values)` | `pgxmocks` | baris yang menyerahkan nilai ke destination, seperti driver |
+| `ErrRow(err)` | `pgxmocks` | baris yang gagal di setiap scan |
+| `RowsValues(rows...)` | `pgxmocks` | result set dengan beberapa baris |
+| `ErrRows(err)` | `pgxmocks` | result set yang gagal |
+| `MatchSQL(fragment)` | `databasemocks` | pencocokan statement berdasarkan potongan teks |
+| `Delivery(ack, body)` | `amqpmocks` | delivery AMQP yang melapor ke acknowledger |
+
+Helper ini hanya berisi setup expectation — tidak ada mock interface yang ditulis tangan.
+
+Untuk kode yang punya side effect (goroutine, callback), test broker menyinkronkan lewat channel yang ditutup saat settlement terjadi, bukan menebak durasi sleep.
+
+### Mocking butuh seam di production code
+
+`internal/shared/` sengaja punya interface kecil agar implementasi bisa dimock:
+
+- `database.Pool` — `DBTX` plus `BeginTx`.
+- `cache.Backend` — perintah Redis yang dipakai cache, dengan nilai berupa byte mentah.
+- `broker.Channel` dan `broker.Connection` — subset dari API AMQP yang dipakai broker.
+- `broker.NewRabbitMQWithDialer` — constructor yang menerima dialer, jadi test bisa memberi connection palsu.
+
+Kalau production code perlu mock baru, tambahkan interface di package-nya, bukan pakai tipe konkret.
 
 ## Unit test
 
@@ -23,64 +82,14 @@ Tidak butuh service apa pun:
 make test          # go test -v -race ./...
 ```
 
-## Test integrasi
+## Invariant database
 
-Butuh service nyata. Test **skip sendiri** kalau env var-nya kosong, jadi `make test` tetap jalan tanpa DB.
+Invariant ledger hidup di database (trigger dan constraint), jadi tidak bisa dimock. Test-nya membaca file migration dan memastikan aturannya masih ada:
 
-| Service | Variable | Dipakai oleh |
-|---|---|---|
-| PostgreSQL | `DB_DSN` | `test/ledger/*`, `test/shared/database/*` |
-| Redis | `REDIS_HOST`, `REDIS_PORT` (opsional `REDIS_PASSWORD`) | `test/shared/cache/redis_test.go` |
-| RabbitMQ | `RABBITMQ_URL` | `test/shared/broker/rabbitmq_test.go` |
+- `tests/ledger/migration_schema_test.go` — struktur tabel dan constraint.
+- `tests/ledger/ledger_invariants_test.go` — aturan trigger: append-only, balance guard, cek currency, dan balance yang didefer ke COMMIT.
 
-> `.env` **tidak** dimuat otomatis oleh test — test membaca `os.Getenv` langsung. Env var harus ada di environment proses.
-
-### Larangan: jangan arahkan `DB_DSN` ke database dev
-
-`test/ledger` menjalankan `DROP SCHEMA IF EXISTS ledger CASCADE` lalu apply ulang seluruh `migrations/ledger/*.sql` **pada setiap run**. Database yang ditunjuk akan kehilangan schema `ledger` dan datanya.
-
-Pakai container sekali pakai:
-
-```bash
-docker run -d --rm --name ledgerline-pg-test \
-  -e POSTGRES_PASSWORD=test \
-  -e POSTGRES_DB=ledgerline_test \
-  -p 55433:5432 postgres:18
-```
-
-### Menjalankan test integrasi
-
-```bash
-# env var diambil dari shell, bukan dari .env
-DB_DSN='postgres://postgres:test@127.0.0.1:55433/ledgerline_test?sslmode=disable' \
-REDIS_HOST=127.0.0.1 REDIS_PORT=6379 \
-RABBITMQ_URL='amqp://guest:guest@127.0.0.1:5672/' \
-go test ./... -race
-```
-
-Kalau `RABBITMQ_URL` diambil dari `.env`, beware `DB_DSN` di `.env` ikut terbawa — export manual, jangan `source .env` utuh.
-
-## Service lokal
-
-Service **tidak ada di repo ini** — PostgreSQL, Redis, dan RabbitMQ hidup di project environment terpisah (`/home/personal/Work/server`) sebagai docker compose stack.
-
-```bash
-cd /home/personal/Work/server
-make postgres-up
-make redis-up
-make rabbitmq-up
-
-make postgres-status   # atau redis-status / rabbitmq-status
-make postgres-logs
-```
-
-| Service | Image | Port (localhost) |
-|---|---|---|
-| PostgreSQL | `postgres:18` | 5432 |
-| Redis | `redis:7-alpine` | 6379 |
-| RabbitMQ | `rabbitmq:4-management` | 5672 (AMQP), 5552 (stream), 15672 (UI) |
-
-Compose file: `postgresql/docker-compose.yml`, `redis/docker-compose.yml`, `rabbitmq/docker-compose.yml`. Stack dev tidak auto-restart — container tetap down sampai di-start manual.
+Test ini memeriksa definisi invariant, bukan perilakunya terhadap data nyata. Kalau aturannya hilang dari migration, test gagal di sini.
 
 ## Coverage
 
@@ -89,53 +98,23 @@ make coverage       # gate: gagal di bawah COVERAGE_MIN (default 80)
 make test-coverage  # tulis coverage.html tanpa gate
 ```
 
-`make coverage` memakai `-coverpkg=./...` karena test berada di `test/` — tanpa itu, default hanya mengukur package test itu sendiri.
+`make coverage` memakai `-coverpkg=./...` karena test berada di `tests/` — tanpa itu, default hanya mengukur package test itu sendiri.
 
 Pengecualian dari pengukuran (lihat `COVERAGE_EXCLUDE` di `Makefile`):
 
 - `ledgerline/cmd/api` — hanya wiring aplikasi.
 - `ledgerline/internal/ledger/infrastructure/sqlcgen` — kode generated.
+- `ledgerline/tests/mocks` — scaffolding test double, bukan kode produksi.
 
 `scripts/coverage.sh` dibaca dari profile, difilter, lalu totalnya dibandingkan dengan minimum.
-
-> Coverage **penuh** butuh ketiga service. Tanpa service, package ledger dan broker tidak pernah dieksekusi dan angka coverage anjlok jauh di bawah gate. Jalankan `make coverage` di server dev, bukan di CI.
 
 ## Di mana test berjalan
 
 | Lingkungan | Yang jalan |
 |---|---|
-| CI | Unit test saja. Test integrasi mendeteksi env var kosong dan skip sendiri |
-| Server dev | Seluruh suite melawan service sungguhan + gate coverage |
-
-## Test yang ditulis untuk mengunci invariant
-
-`test/ledger/ledger_invariants_integration_test.go` menguji aturan database, bukan kode aplikasi:
-
-- Journal dan posting menolak UPDATE, DELETE, dan TRUNCATE.
-- `accounts.balance` tidak bisa di-UPDATE langsung.
-- Saldo negatif butuh `allow_negative = true`.
-- Posting harus punya journal yang ada.
-- `amount` harus positif.
-- Trigger balance benar-benar mengubah saldo akun.
-
-Test ini ada karena invariant yang hanya hidup di kode aplikasi bisa dilewati writer lain.
+| CI | Seluruh suite — tidak butuh service |
+| Server dev | Seluruh suite + gate coverage |
 
 ## Test yang mengunci mekanisme
 
-`test/ledger/repository_querier_test.go` memakai stub `DBTX` untuk membuktikan repository meminta handle **per call**, bukan menyimpan satu handle. Itulah mekanismenya yang membuat satu call bisa ikut transaksi yang dibawa context-nya — dan itu yang dibutuhkan trigger balance yang deferrable.
-
-## Pola umum test integrasi
-
-```go
-func testDB(t *testing.T) *pgxpool.Pool {
-    t.Helper()
-
-    dsn := os.Getenv("DB_DSN")
-    if dsn == "" {
-        t.Skip("DB_DSN not set; skipping integration test")
-    }
-    // ...
-}
-```
-
-`sync.Once` dipakai untuk apply migration satu kali per test binary, bukan per test.
+`tests/ledger/repository_querier_test.go` membuktikan repository meminta handle **per call**, bukan menyimpan satu handle. Itulah mekanismenya yang membuat satu call bisa ikut transaksi yang dibawa context-nya — dan itu yang dibutuhkan trigger balance yang deferrable.

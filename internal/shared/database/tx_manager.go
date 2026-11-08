@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // txKey is the context key for storing database transactions.
@@ -26,6 +25,18 @@ type DBTX interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Pool is the subset of *pgxpool.Pool that the TxManager needs.
+//
+// The interface exists so the transaction manager can be tested without a
+// database: a test supplies a pool whose BeginTx hands out a fake
+// transaction.
+type Pool interface {
+	DBTX
+
+	// BeginTx starts a transaction with the given options.
+	BeginTx(ctx context.Context, txOptions pgx.TxOptions) (pgx.Tx, error)
 }
 
 // IsolationLevel maps a string to a pgx.TxIsoLevel.
@@ -47,7 +58,7 @@ func IsolationLevel(s string) pgx.TxIsoLevel {
 
 // TxManager manages database transactions with automatic commit/rollback handling.
 type TxManager struct {
-	pool           *pgxpool.Pool
+	pool           Pool
 	isolationLevel pgx.TxIsoLevel
 	maxRetries     int
 	retryDelay     time.Duration
@@ -75,7 +86,7 @@ func WithRetryDelay(d time.Duration) TxManagerOption {
 }
 
 // NewTxManager creates a new TxManager with the given connection pool and options.
-func NewTxManager(pool *pgxpool.Pool, opts ...TxManagerOption) *TxManager {
+func NewTxManager(pool Pool, opts ...TxManagerOption) *TxManager {
 	m := &TxManager{
 		pool:           pool,
 		isolationLevel: pgx.ReadCommitted,

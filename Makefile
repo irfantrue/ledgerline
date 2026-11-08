@@ -4,18 +4,21 @@ AIR_PATH := $(AIR_DIR)/$(APP_NAME)
 CMD_PATH := ./cmd/api/
 
 # Coverage settings.
-# COVERPKG instruments every package, because the tests live in test/ and
+# COVERPKG instruments every package, because the tests live in tests/ and
 # would otherwise only measure themselves.
 COVERPKG ?= ./...
 # Minimum total coverage in percent. `make coverage` fails below it.
 COVERAGE_MIN ?= 80
 # Packages left out of the measurement: cmd/api only wires the application
-# together, and the sqlcgen package is generated code.
+# together, the sqlcgen package is generated code, and tests/mocks holds
+# the generated test doubles, which are scaffolding rather than production
+# code. The pattern is a prefix, so it covers every mock package under
+# tests/mocks/.
 # The pattern is a basic regular expression, so the alternatives are separated
 # with \|.
-COVERAGE_EXCLUDE ?= ledgerline/cmd/api/\|ledgerline/internal/ledger/infrastructure/sqlcgen/
+COVERAGE_EXCLUDE ?= ledgerline/cmd/api/\|ledgerline/internal/ledger/infrastructure/sqlcgen/\|ledgerline/tests/mocks/
 
-.PHONY: all build build-air run watch tidy vendor lint test test-coverage coverage clean
+.PHONY: all build build-air run watch tidy vendor lint mocks test test-coverage coverage clean
 
 all: tidy vendor lint test build
 
@@ -46,6 +49,14 @@ lint:
 	@echo "Running linters..."
 	golangci-lint run
 
+# Regenerates the test doubles from the interfaces they stand in for.
+#
+# The generated files are committed, so a fresh clone can build and test
+# without mockery installed. Run this after changing an interface.
+mocks:
+	@echo "Generating mocks..."
+	mockery
+
 test:
 	go test -v -race ./...
 
@@ -56,9 +67,6 @@ test-coverage:
 	@echo "Coverage report generated: coverage.html"
 
 # Runs the tests and fails when the total coverage is below COVERAGE_MIN.
-#
-# CI does not run this: it only runs the unit tests, and the integration tests
-# skip themselves when the connection strings are absent.
 coverage:
 	go test -race -coverpkg=$(COVERPKG) -coverprofile=coverage.out ./...
 	@./scripts/coverage.sh coverage.out $(COVERAGE_MIN) "$(COVERAGE_EXCLUDE)"

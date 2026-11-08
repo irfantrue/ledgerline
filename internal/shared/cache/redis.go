@@ -1,4 +1,3 @@
-// Package cache provides caching abstractions and implementations.
 package cache
 
 import (
@@ -11,12 +10,21 @@ import (
 
 // RedisCache is a cache.Service implementation using Redis.
 type RedisCache struct {
-	client *redis.Client
+	backend Backend
 }
 
 // NewRedisCache creates a new Redis cache instance.
 func NewRedisCache(client *redis.Client) Service {
-	return &RedisCache{client: client}
+	return NewRedisCacheWithBackend(NewRedisBackend(client))
+}
+
+// NewRedisCacheWithBackend creates a cache on top of a Backend.
+//
+// The Backend indirection exists so the cache can be tested without a running
+// Redis: the marshalling, the key handling and the prefix scan all live in
+// RedisCache, and only the commands themselves come from the backend.
+func NewRedisCacheWithBackend(backend Backend) Service {
+	return &RedisCache{backend: backend}
 }
 
 // Set stores a value in Redis with the specified key and TTL.
@@ -25,36 +33,34 @@ func (r *RedisCache) Set(ctx context.Context, key string, value any, ttl time.Du
 	if err != nil {
 		return err
 	}
-	return r.client.Set(ctx, key, bytes, ttl).Err()
+	return r.backend.Set(ctx, key, bytes, ttl)
 }
 
 // Get retrieves a value from Redis and unmarshals it into dest.
 func (r *RedisCache) Get(ctx context.Context, key string, dest any) error {
-	val, err := r.client.Get(ctx, key).Result()
+	val, err := r.backend.Get(ctx, key)
 	if err != nil {
 		return err
 	}
-	return sonic.Unmarshal([]byte(val), dest)
+	return sonic.Unmarshal(val, dest)
 }
 
 // Delete removes a key from Redis.
 func (r *RedisCache) Delete(ctx context.Context, key string) error {
-	return r.client.Del(ctx, key).Err()
+	return r.backend.Del(ctx, key)
 }
 
 // DeleteByPrefix scans for keys matching the prefix pattern and deletes them in batches.
 func (r *RedisCache) DeleteByPrefix(ctx context.Context, prefix string) error {
 	var cursor uint64
 	for {
-		keys, nextCursor, err := r.client.Scan(ctx, cursor, prefix+"*", 100).Result()
+		keys, nextCursor, err := r.backend.Scan(ctx, cursor, prefix+"*", 100)
 		if err != nil {
 			return err
 		}
 
 		if len(keys) > 0 {
-			pipe := r.client.Pipeline()
-			pipe.Del(ctx, keys...)
-			if _, err := pipe.Exec(ctx); err != nil {
+			if err := r.backend.Del(ctx, keys...); err != nil {
 				return err
 			}
 		}

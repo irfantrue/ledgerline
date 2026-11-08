@@ -47,7 +47,7 @@ Dependency **divendor dan di-commit**. `vendor/` harus tetap lengkap — lihat *
 | `internal/<module>/domain/` | Entity dan aturan bisnis; tanpa import infrastructure |
 | `internal/<module>/infrastructure/` | `queries/` (`.sql`), `sqlcgen/` (generated), `repository/` (interface + impl) |
 | `pkg/` | Helper reusable, minim dependency: `ctxval`, `crypto`, `decimalutil`, `idgen`, `jwt`, `validator` |
-| `test/` | Semua test, mencerminkan source tree — `test/ledger/`, `test/shared/…`, `test/pkg/…` |
+| `tests/` | Semua test, mencerminkan source tree — `tests/ledger/`, `tests/shared/…`, `tests/pkg/…`, plus `tests/mocks/<pkg>/` per package sumber yang punya interface |
 | `migrations/ledger/` | Migration SQL tulis-tangan |
 | `docs/` | Dokumentasi cara kerja repo (lihat tabel di atas) |
 
@@ -89,24 +89,18 @@ Hormati layering `domain` → `infrastructure` → `sqlcgen`:
 
 ## Testing
 
-- **Test tinggal di `test/`, bukan di sebelah kode.** Pohon test mencerminkan source: `test/ledger/` untuk `internal/ledger/`, `test/shared/httpx/middleware/` untuk `internal/shared/httpx/middleware/`. `internal/` dan `pkg/` bebas file test.
+- **Test tinggal di `tests/`, bukan di sebelah kode.** Pohon test mencerminkan source: `tests/ledger/` untuk `internal/ledger/`, `tests/shared/httpx/middleware/` untuk `internal/shared/httpx/middleware/`. `internal/` dan `pkg/` bebas file test.
 - Karena package test berada di luar kode yang diuji, mereka hanya bisa memakai identifier **exported**. Export helper bila test butuh, jangan memindahkan test balik ke `internal/`.
 - `make test` menjalankan `go test -v -race ./...`.
-- Test integrasi butuh service nyata dan **skip** bila env var-nya tidak di-set:
-
-  | Service | Variable |
-  |---|---|
-  | PostgreSQL | `DB_DSN` |
-  | Redis | `REDIS_HOST`, `REDIS_PORT` |
-  | RabbitMQ | `RABBITMQ_URL` |
-
-- Service (PostgreSQL, Redis, RabbitMQ) **tidak ada di repo ini** — mereka hidup di project environment terpisah. Arahkan env var di atas ke sana.
+- **Tidak ada service yang dibutuhkan.** Seluruh suite berjalan tanpa PostgreSQL, Redis, dan RabbitMQ: dependency-nya dimock pakai mock yang di-generate mockery.
+- Assertion pakai `testify/assert` dan `testify/require`.
+- Mock **di-generate** dengan [mockery](https://github.com/vektra/mockery) v3 (config `.mockery.yaml`, target `make mocks`); hasilnya tinggal di `tests/mocks/` dan ikut di-commit. Setiap package sumber punya direktori mock sendiri (`tests/mocks/databasemocks/`, `tests/mocks/pgxmocks/`, …) dengan nama package `<sumber>mocks` — jangan-satukan semua double dalam satu package. Jangan tulis mock interface tangan — daftarkan interface-nya di `.mockery.yaml` lalu regenerate.
+- Mocking butuh seam di production code: `internal/shared/` punya interface kecil (`database.Pool`, `cache.Backend`, `broker.Channel`, `broker.Connection`) supaya implementasinya bisa dimock. Kalau butuh mock baru, tambahkan interface di package-nya lalu daftarkan di `.mockery.yaml`.
+- Invariant ledger hidup di database (trigger/constraint) dan tidak bisa dimock — test-nya membaca file migration dan memastikan aturannya masih ada (`tests/ledger/migration_schema_test.go`, `tests/ledger/ledger_invariants_test.go`).
 - **Di mana test berjalan:**
-  - **CI** (`Dependencies` → `Lint` → `Test` → `Build`): unit test saja. Test integrasi mendeteksi env var kosong dan skip sendiri.
-  - **Server dev**: run menyeluruh — seluruh suite melawan service sungguhan + gate coverage (`make coverage`). Jalankan di server dev, bukan di CI.
-- Test integrasi ledger memiliki schema `ledger`: mereka drop dan create ulang, jadi `DB_DSN` harus menunjuk database **buang**.
-- Tidak ada framework mocking — pakai table-driven test dan `httptest`.
-- **Coverage**: `make coverage` mengukur seluruh modul dengan `-coverpkg=./...` (test ada di `test/`, jadi default hanya mengukur dirinya sendiri), menulis `coverage.html`, dan gagal di bawah `COVERAGE_MIN` (80 default). Ini run menyeluruh — butuh ketiga service karena test integrasi yang menutup sebagian besar kode, jadi jalankan di server dev. `cmd/api` dikecualikan: hanya wiring aplikasi.
+  - **CI** (`Dependencies` → `Lint` → `Test` → `Build`): seluruh suite, karena tidak butuh service.
+  - **Server dev**: seluruh suite + gate coverage (`make coverage`).
+- **Coverage**: `make coverage` mengukur seluruh modul dengan `-coverpkg=./...` (test ada di `tests/`, jadi default hanya mengukur dirinya sendiri), menulis `coverage.html`, dan gagal di bawah `COVERAGE_MIN` (80 default). `cmd/api` dan `tests/mocks/` dikecualikan: wiring aplikasi dan scaffolding test.
 
 ## Aturan vendor (penting)
 

@@ -12,7 +12,7 @@ Aturan main yang dijaga database, bukan kode aplikasi: journal dan posting bersi
 | `internal/shared/` | Kode platform: `config`, `logger`, `database`, `httpx` (+ `middleware`, `response`), `cache`, `broker` |
 | `internal/ledger/` | Modul ledger: `domain/` (entity) + `infrastructure/` (`queries/`, `sqlcgen/`, `repository/`) |
 | `pkg/` | Helper reusable: `ctxval`, `crypto`, `decimalutil`, `idgen`, `jwt`, `validator` |
-| `test/` | Semua test, pohonnya mencerminkan source tree |
+| `tests/` | Semua test, pohonnya mencerminkan source tree |
 | `migrations/ledger/` | Migration SQL tulis-tangan (`001` schema, `002` trigger) |
 | `vendor/` | Dependency di-commit agar build jalan tanpa network |
 

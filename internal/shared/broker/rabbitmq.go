@@ -16,9 +16,9 @@ import (
 
 // RabbitMQ implements MessageBroker using AMQP.
 type RabbitMQ struct {
-	conn           *amqp.Connection
-	publishChannel *amqp.Channel
-	consumeChannel *amqp.Channel
+	conn           Connection
+	publishChannel Channel
+	consumeChannel Channel
 
 	// returns carries the messages the broker could not route. The broker
 	// sends a return before the publisher confirm of the same message, so a
@@ -37,14 +37,27 @@ type RabbitMQ struct {
 	done chan struct{}
 	conf config.Config
 	url  string
+	// dial opens the connection. It is a field so a test can supply a
+	// connection that never touches the network.
+	dial func(url string) (Connection, error)
 }
 
 // NewRabbitMQ creates a new RabbitMQ connection with publisher confirms enabled.
 func NewRabbitMQ(conf config.Config) (MessageBroker, error) {
+	return NewRabbitMQWithDialer(conf, dialAMQP)
+}
+
+// NewRabbitMQWithDialer creates a broker that opens its connections with the
+// given dialer.
+//
+// The dialer is a parameter so the broker can be tested without a running
+// RabbitMQ: a test supplies a dialer that hands out a fake connection.
+func NewRabbitMQWithDialer(conf config.Config, dial func(url string) (Connection, error)) (MessageBroker, error) {
 	m := &RabbitMQ{
 		conf: conf,
 		url:  conf.RabbitMQ.URL,
 		done: make(chan struct{}),
+		dial: dial,
 	}
 
 	if err := m.connect(); err != nil {
@@ -55,9 +68,18 @@ func NewRabbitMQ(conf config.Config) (MessageBroker, error) {
 	return m, nil
 }
 
+// dialAMQP opens a real AMQP connection.
+func dialAMQP(url string) (Connection, error) {
+	conn, err := amqp.Dial(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial RabbitMQ: %w", err)
+	}
+	return &amqpConn{conn: conn}, nil
+}
+
 // connect opens the connection, its channels and the DLX topology.
 func (m *RabbitMQ) connect() error {
-	conn, publishChannel, consumeChannel, returns, err := m.dial()
+	conn, publishChannel, consumeChannel, returns, err := m.dialChannels()
 	if err != nil {
 		return err
 	}
@@ -73,13 +95,13 @@ func (m *RabbitMQ) connect() error {
 	return nil
 }
 
-// dial opens a connection and its channels. It deliberately runs without
-// holding mu: amqp.Dial blocks on the network and must not freeze every other
-// operation on the broker.
-func (m *RabbitMQ) dial() (*amqp.Connection, *amqp.Channel, *amqp.Channel, chan amqp.Return, error) {
-	conn, err := amqp.Dial(m.url)
+// dialChannels opens a connection and its channels. It deliberately runs
+// without holding mu: amqp.Dial blocks on the network and must not freeze
+// every other operation on the broker.
+func (m *RabbitMQ) dialChannels() (Connection, Channel, Channel, chan amqp.Return, error) {
+	conn, err := m.dial(m.url)
 	if err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("failed to dial RabbitMQ: %w", err)
+		return nil, nil, nil, nil, err
 	}
 
 	publishChannel, err := conn.Channel()
@@ -127,7 +149,7 @@ func (m *RabbitMQ) dial() (*amqp.Connection, *amqp.Channel, *amqp.Channel, chan 
 
 // declareTopology declares the Dead Letter Exchange (DLX) and all required queues
 // with their DLX bindings.
-func declareTopology(ch *amqp.Channel) error {
+func declareTopology(ch Channel) error {
 	if err := ch.ExchangeDeclare("dlx.exchange", "direct", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("failed to declare dlx exchange: %w", err)
 	}
@@ -176,20 +198,13 @@ func (m *RabbitMQ) Publish(ctx context.Context, exchange, routingKey string, bod
 
 	messageID := uuid.NewString()
 
-	conf, err := ch.PublishWithDeferredConfirmWithContext(
-		ctx,
-		exchange,
-		routingKey,
-		true, // mandatory: an unroutable message comes back instead of being dropped
-		false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			MessageId:    messageID,
-			Body:         body,
-			Timestamp:    time.Now(),
-		},
-	)
+	conf, err := ch.Publish(ctx, exchange, routingKey, true, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		MessageId:    messageID,
+		Body:         body,
+		Timestamp:    time.Now(),
+	})
 	if err != nil {
 		return fmt.Errorf("publish failed: %w", err)
 	}
@@ -221,7 +236,7 @@ func (m *RabbitMQ) Publish(ctx context.Context, exchange, routingKey string, bod
 
 // getPublishChannel returns the current publish channel, reconnecting when the
 // broker closed it.
-func (m *RabbitMQ) getPublishChannel() (*amqp.Channel, chan amqp.Return, error) {
+func (m *RabbitMQ) getPublishChannel() (Channel, chan amqp.Return, error) {
 	m.mu.RLock()
 	ch, returns := m.publishChannel, m.returns
 	m.mu.RUnlock()
@@ -256,7 +271,7 @@ func (m *RabbitMQ) getPublishChannel() (*amqp.Channel, chan amqp.Return, error) 
 
 // reconnect replaces the connection and its channels.
 func (m *RabbitMQ) reconnect() error {
-	conn, publishChannel, consumeChannel, returns, err := m.dial()
+	conn, publishChannel, consumeChannel, returns, err := m.dialChannels()
 	if err != nil {
 		return err
 	}

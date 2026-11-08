@@ -1,0 +1,77 @@
+# Mockery generates the test doubles of the interfaces the code depends on.
+#
+# Every source package gets its own mock package, so a double is imported from
+# the place that owns the interface it stands in for. The generated files live
+# under tests/mocks/ and are committed, so a fresh clone can build and test
+# without mockery installed.
+#
+# Run `make mocks` after changing an interface.
+all: false
+dir: 'tests/mocks'
+filename: '{{.InterfaceName | snakecase}}.go'
+force-file-write: true
+formatter: goimports
+generate: true
+include-auto-generated: false
+log-level: info
+structname: '{{.InterfaceName}}'
+recursive: false
+require-template-schema-exists: true
+template: testify
+template-schema: '{{.Template}}.schema.json'
+packages:
+  # The database handle the repositories use, and the pool the transaction
+  # manager takes.
+  ledgerline/internal/shared/database:
+    config:
+      dir: 'tests/mocks/databasemocks'
+      pkgname: 'databasemocks'
+    interfaces:
+      DBTX:
+      Pool:
+  # The handle resolver the repositories use.
+  ledgerline/internal/ledger/infrastructure/repository:
+    config:
+      dir: 'tests/mocks/repositorymocks'
+      pkgname: 'repositorymocks'
+    interfaces:
+      Querier:
+  # The Redis commands the cache uses.
+  ledgerline/internal/shared/cache:
+    config:
+      dir: 'tests/mocks/cachemocks'
+      pkgname: 'cachemocks'
+    interfaces:
+      Backend:
+  # The AMQP operations the broker uses.
+  ledgerline/internal/shared/broker:
+    config:
+      dir: 'tests/mocks/brokermocks'
+      pkgname: 'brokermocks'
+    interfaces:
+      Channel:
+      Connection:
+      Confirmation:
+  # The database handle the readiness probe pings.
+  ledgerline/internal/shared/httpx:
+    config:
+      dir: 'tests/mocks/httpxmocks'
+      pkgname: 'httpxmocks'
+    interfaces:
+      Pinger:
+  # The driver types the mocks have to stand in for.
+  github.com/jackc/pgx/v5:
+    config:
+      dir: 'tests/mocks/pgxmocks'
+      pkgname: 'pgxmocks'
+    interfaces:
+      Row:
+      Rows:
+      Tx:
+  # The acknowledgements the broker sends for a delivery.
+  github.com/rabbitmq/amqp091-go:
+    config:
+      dir: 'tests/mocks/amqpmocks'
+      pkgname: 'amqpmocks'
+    interfaces:
+      Acknowledger:
